@@ -8,7 +8,7 @@ There is no backend or build process required. The entire simulation runs locall
 
 1. Download or clone this repository.
 2. Open `index.html` in any modern web browser.
-3. **Alternatively, view it live here:** [Insert your GitHub Pages Link Here]
+3. **Alternatively, view it live here:** [https://mmax1406.github.io/pid-control-sandbox/]
 
 ## 🛠️ Features
 
