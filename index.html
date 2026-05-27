@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PID Control Sandbox</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #f4f4f9;
+            --surface: #ffffff;
+            --text: #333333;
+            --primary: #2563eb;
+            --border: #e5e7eb;
+            --motor-bg: #e2e8f0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-top: 0; color: #1e293b; }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            max-width: 1200px;
+            width: 100%;
+        }
+        .card {
+            background-color: var(--surface);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .control-group { margin-bottom: 15px; }
+        .control-group label {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+        .graph-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .metrics {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 0.9em;
+            background: #f8fafc;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .motor-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas#motorCanvas {
+            background-color: var(--motor-bg);
+            border-radius: 50%;
+            border: 8px solid #cbd5e1;
+            box-shadow: inset 0 4px 6px rgba(0,0,0,0.1), 0 10px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .live-controls {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            max-width: 400px;
+        }
+        input[type="number"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 1em;
+        }
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #1d4ed8; }
+        .live-stats {
+            margin-top: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .disturbance-highlight {
+            background-color: #fef2f2;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #fca5a5;
+        }
+        @media (max-width: 800px) {
+            .container { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Left Panel: Controls and Graph -->
+        <div class="card">
+            <h1>PID Controller Tuning</h1>
+            <p style="font-size: 0.9em; color: #64748b; margin-bottom: 20px;">
+                Equation: <strong>J&theta;'' + b&theta;' = &tau;<sub>pid</sub> + &tau;<sub>dist</sub></strong>
+            </p>
+            
+            <div class="control-group">
+                <label>Proportional (Kp) <span id="valKp">10</span></label>
+                <input type="range" id="kp" min="0" max="50" step="0.5" value="10">
+            </div>
+            <div class="control-group">
+                <label>Integral (Ki) <span id="valKi">0.5</span></label>
+                <input type="range" id="ki" min="0" max="20" step="0.1" value="0.5">
+            </div>
+            <div class="control-group">
+                <label>Derivative (Kd) <span id="valKd">4</span></label>
+                <input type="range" id="kd" min="0" max="20" step="0.1" value="4">
+            </div>
+            <div class="control-group">
+                <label>Damping (b) <span id="valB">1</span></label>
+                <input type="range" id="b" min="0" max="10" step="0.1" value="1">
+            </div>
+            <div class="control-group disturbance-highlight">
+                <label>Constant Disturbance (&tau;<sub>dist</sub>) <span id="valDist">0.0</span></label>
+                <input type="range" id="dist" min="-10" max="10" step="0.5" value="0">
+                <div style="font-size:0.8em; color: #ef4444;">Notice how disturbance creates steady-state error if Ki is 0!</div>
+            </div>
+
+            <div class="graph-container">
+                <canvas id="stepGraph"></canvas>
+            </div>
+            <div class="metrics">
+                <div id="statOvershoot">Overshoot: --%</div>
+                <div id="statSettling">Settling Time: --s</div>
+                <div id="statError">Steady-State Err: --</div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Live Motor -->
+        <div class="card motor-section">
+            <canvas id="motorCanvas" width="400" height="400"></canvas>
+            <div class="live-stats" id="currentAngleDisplay">Current Angle: 0.0&deg;</div>
+            
+            <div style="margin-top: 30px; width: 100%;">
+                <label style="font-weight: 600; display: block; margin-bottom: 8px;">Jump to Target Angle (Degrees)</label>
+                <div class="live-controls">
+                    <input type="number" id="targetAngle" value="90">
+                    <button id="btnJump">Execute Jump</button>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        // System Parameters
+        const J = 1.0; 
+        let params = { kp: 10, ki: 0.5, kd: 4, b: 1, dist: 0 };
+        
+        // Element references
+        const elKp = document.getElementById('kp');
+        const elKi = document.getElementById('ki');
+        const elKd = document.getElementById('kd');
+        const elB = document.getElementById('b');
+        const elDist = document.getElementById('dist');
+        
+        // Update labels and params
+        function updateParams() {
+            params.kp = parseFloat(elKp.value);
+            params.ki = parseFloat(elKi.value);
+            params.kd = parseFloat(elKd.value);
+            params.b = parseFloat(elB.value);
+            params.dist = parseFloat(elDist.value);
+            
+            document.getElementById('valKp').innerText = params.kp.toFixed(1);
+            document.getElementById('valKi').innerText = params.ki.toFixed(1);
+            document.getElementById('valKd').innerText = params.kd.toFixed(1);
+            document.getElementById('valB').innerText = params.b.toFixed(1);
+            document.getElementById('valDist').innerText = params.dist.toFixed(1);
+            
+            updateGraph();
+        }
+
+        [elKp, elKi, elKd, elB, elDist].forEach(el => el.addEventListener('input', updateParams));
+
+        // --- GRAPH ENGINE ---
+        let stepChart;
+        const ctxGraph = document.getElementById('stepGraph').getContext('2d');
+        
+        function initGraph() {
+            stepChart = new Chart(ctxGraph, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        { label: 'Target (1.0 rad)', borderColor: '#94a3b8', borderDash: [5, 5], data: [], pointRadius: 0, borderWidth: 2 },
+                        { label: 'Position (rad)', borderColor: '#2563eb', data: [], pointRadius: 0, borderWidth: 2 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: 'Time (s)' }, min: 0, max: 10 },
+                        y: { title: { display: true, text: 'Position (rad)' } }
+                    }
+                }
+            });
+            updateGraph();
+        }
+
+        function updateGraph() {
+            let t = 0;
+            const dt = 0.01;
+            const target = 1.0;
+            let th = 0, w = 0, integral = 0;
+            
+            let dataTarget = [];
+            let dataPos = [];
+            
+            let maxTh = 0;
+            let settledTime = null;
+            let isSettled = false;
+
+            for(let i=0; i<=1000; i++) {
+                let err = target - th;
+                integral += err * dt;
+                
+                // Anti-windup for static graph (simple clamp)
+                if (integral > 50) integral = 50;
+                if (integral < -50) integral = -50;
+
+                let tau_pid = (params.kp * err) + (params.ki * integral) - (params.kd * w);
+                let tau_total = tau_pid + params.dist;
+                
+                let alpha = (tau_total - params.b * w) / J;
+                
+                w += alpha * dt;
+                th += w * dt;
+                
+                if(th > maxTh) maxTh = th;
+                
+                // Settling time logic (within 2% of target)
+                if (Math.abs(th - target) <= 0.02 * target) {
+                    if (!isSettled) { settledTime = t; isSettled = true; }
+                } else {
+                    isSettled = false; settledTime = null;
+                }
+
+                if (i % 2 === 0) { // downsample for performance
+                    dataTarget.push({x: t, y: target});
+                    dataPos.push({x: t, y: th});
+                }
+                t += dt;
+            }
+
+            stepChart.data.datasets[0].data = dataTarget;
+            stepChart.data.datasets[1].data = dataPos;
+            stepChart.update();
+
+            // Calculate Metrics
+            let overshoot = 0;
+            if (maxTh > target) {
+                overshoot = ((maxTh - target) / target) * 100;
+            }
+            
+            let finalError = Math.abs(target - th);
+
+            document.getElementById('statOvershoot').innerText = `Overshoot: ${overshoot.toFixed(1)}%`;
+            document.getElementById('statSettling').innerText = `Settling Time: ${settledTime ? settledTime.toFixed(2) + 's' : '>10s'}`;
+            document.getElementById('statError').innerHTML = `Steady-State Err: <strong style="color:${finalError > 0.03 ? '#ef4444' : '#22c55e'}">${finalError.toFixed(3)}</strong>`;
+        }
+
+        // --- ANIMATION ENGINE ---
+        const canvas = document.getElementById('motorCanvas');
+        const ctx = canvas.getContext('2d');
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        const radius = 150;
+
+        let animState = {
+            th: 0,
+            w: 0,
+            integral: 0,
+            targetTh: Math.PI / 2 // 90 deg default
+        };
+        
+        let lastTime = performance.now();
+
+        function drawMotor() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Target Indicator (Ghost)
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(animState.targetTh);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(radius, 0);
+            ctx.strokeStyle = 'rgba(148, 163, 184, 0.5)'; // dashed gray
+            ctx.lineWidth = 4;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            
+            // Target Dot
+            ctx.beginPath();
+            ctx.arc(radius, 0, 8, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
+            ctx.fill();
+            ctx.restore();
+
+            // Draw Rotor
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(animState.th);
+            
+            // Central hub
+            ctx.beginPath();
+            ctx.arc(0, 0, 30, 0, Math.PI * 2);
+            ctx.fillStyle = '#475569';
+            ctx.fill();
+
+            // Pointer Arm
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(radius - 10, 0);
+            ctx.lineTo(0, 10);
+            ctx.closePath();
+            ctx.fillStyle = '#dc2626';
+            ctx.fill();
+            
+            // Arm accent
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(radius - 15, 0);
+            ctx.strokeStyle = '#991b1b';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.restore();
+            
+            // Current Angle Text Updates
+            let deg = (animState.th * 180 / Math.PI) % 360;
+            // Handle negative display cleanly
+            if(deg <= -180) deg += 360 * Math.ceil(Math.abs(deg)/360);
+            
+            document.getElementById('currentAngleDisplay').innerText = `Current Angle: ${deg.toFixed(1)}°`;
+        }
+
+        function animate(time) {
+            // Calculate dt in seconds (cap at 0.05 to prevent instability on tab switch)
+            let dt = (time - lastTime) / 1000;
+            if (dt > 0.05) dt = 0.05; 
+            lastTime = time;
+
+            // Physics Integration (Euler)
+            let err = animState.targetTh - animState.th;
+            animState.integral += err * dt;
+            
+            // Windup limit
+            if(animState.integral > 100) animState.integral = 100;
+            if(animState.integral < -100) animState.integral = -100;
+
+            let tau_pid = (params.kp * err) + (params.ki * animState.integral) - (params.kd * animState.w);
+            let tau_total = tau_pid + params.dist;
+            
+            let alpha = (tau_total - params.b * animState.w) / J;
+            
+            animState.w += alpha * dt;
+            animState.th += animState.w * dt;
+
+            drawMotor();
+            requestAnimationFrame(animate);
+        }
+
+        // Jump Event
+        document.getElementById('btnJump').addEventListener('click', () => {
+            let targetDeg = parseFloat(document.getElementById('targetAngle').value);
+            if(isNaN(targetDeg)) targetDeg = 0;
+            animState.targetTh = targetDeg * (Math.PI / 180);
+        });
+
+        // Initialize
+        initGraph();
+        requestAnimationFrame(animate);
+
+    </script>
+</body>
+</html>
